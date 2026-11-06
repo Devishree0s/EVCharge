@@ -1,0 +1,40 @@
+name: Validate EVCharge
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: client
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: server
+      - name: Test backend
+        run: npm test
+        working-directory: server
+      - name: Build frontend
+        run: npm run build
+        working-directory: client

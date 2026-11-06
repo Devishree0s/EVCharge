@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 
 process.env.MONGODB_URI = '';
-const { default: app } = await import('./server.js');
+process.env.CLIENT_ORIGIN = 'http://localhost:5173';
+const { default: app, validateProductionConfig } = await import('./server.js');
 
 let server;
 let base;
@@ -27,6 +28,73 @@ test('health reports the no-database demo mode', async () => {
   assert.equal(body.mode, 'demo');
   assert.equal(body.db, 'not_required');
   assert.equal(body.ok, true);
+});
+
+test('production startup requires Atlas and the Vercel origin', () => {
+  assert.throws(
+    () => validateProductionConfig({ NODE_ENV: 'production', PORT: '10000', CLIENT_ORIGIN: 'https://evcharge.vercel.app' }),
+    /MONGODB_URI is required in production/
+  );
+  assert.throws(
+    () => validateProductionConfig({ NODE_ENV: 'production', PORT: '10000', MONGODB_URI: 'mongodb://localhost/db' }),
+    /CLIENT_ORIGIN is required in production/
+  );
+  assert.throws(
+    () => validateProductionConfig({ NODE_ENV: 'production', PORT: '10000', MONGODB_URI: 'mongodb://localhost/db', CLIENT_ORIGIN: 'https://evcharge.vercel.app/path' }),
+    /without paths/
+  );
+  assert.deepEqual(
+    validateProductionConfig({
+      NODE_ENV: 'production',
+      PORT: '10000',
+      MONGODB_URI: 'mongodb://localhost/db',
+      CLIENT_ORIGIN: 'https://evcharge.vercel.app,https://evcharge.example.com',
+    }),
+    { port: 10000 }
+  );
+  assert.throws(() => validateProductionConfig({ PORT: 'not-a-port' }), /PORT must be an integer/);
+});
+
+test('CORS allows the configured frontend origin', async () => {
+  const response = await fetch(`${base}/health`, { headers: { Origin: 'http://localhost:5173' } });
+
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+});
+
+test('MongoDB mode reports unhealthy until the database connection is ready', async () => {
+  const previous = {
+    MONGODB_URI: process.env.MONGODB_URI,
+    CLIENT_ORIGIN: process.env.CLIENT_ORIGIN,
+    NODE_ENV: process.env.NODE_ENV,
+  };
+  let productionServer;
+
+  try {
+    process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/evcharge_health_test';
+    process.env.CLIENT_ORIGIN = 'https://evcharge.vercel.app';
+    process.env.NODE_ENV = 'production';
+    const { default: productionApp } = await import('./server.js?production-health-test');
+    productionServer = productionApp.listen(0);
+    await new Promise((resolve) => productionServer.once('listening', resolve));
+
+    const response = await fetch(`http://127.0.0.1:${productionServer.address().port}/api/health`);
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.equal(body.ok, false);
+    assert.equal(body.mode, 'mongodb');
+    assert.equal(body.db, 'disconnected');
+  } finally {
+    if (productionServer) {
+      await new Promise((resolve, reject) => {
+        productionServer.close((error) => error ? reject(error) : resolve());
+      });
+    }
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test('station search supports text, connector, power, and result limits', async () => {

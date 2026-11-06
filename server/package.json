@@ -11,7 +11,7 @@
     "import:ocm": "node import-ocm.js",
     "test": "node --test"
   },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=20.19.0" },
   "dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^18.0.6",

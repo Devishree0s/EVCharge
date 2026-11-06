@@ -52,25 +52,85 @@ The route planner uses public OpenStreetMap Nominatim and OSRM services. If the
 routing service is unavailable, it labels the straight-line estimate in the UI.
 Location search and map tiles require internet access.
 
-## Deploy
+## Deploy with Vercel, Render, and MongoDB Atlas
 
-The included GitHub Actions workflow publishes the Vite website to GitHub Pages
-whenever you push to `main`. With no `VITE_API_URL` configured, the deployed
-website uses the bundled sample stations; driver reports are saved in that
-browser. This standalone mode needs no API host or database.
+The frontend is deployed by **Vercel**, the Express API by **Render**, and
+persistent station and report data by **MongoDB Atlas**. GitHub Actions runs
+tests and a production frontend build; it does not deploy to GitHub Pages.
 
-To use the Express API instead, deploy it separately with the Render Blueprint
-in `render.yaml`, then set the GitHub Actions repository variable `VITE_API_URL`
-to `https://<your-api-host>/api`. MongoDB is optional; without `MONGODB_URI`
-the hosted API serves demo data and keeps reports in memory until restart.
+### 1. Create the MongoDB Atlas database
 
-Enable GitHub Pages with **GitHub Actions** as its source. After the first
-successful workflow run, the site is available at
-`https://devishree0s.github.io/EVCharge/`.
+Create a database user and database, then copy its connection string. Replace
+the username, password, and database name in the URI as required. Keep this URI
+private; add it only as the Render `MONGODB_URI` environment variable.
 
-The API defaults to allowing cross-origin requests for a straightforward demo.
-For a restricted deployment, set `CLIENT_ORIGIN` to the exact website origin(s),
-comma-separated.
+In Atlas Network Access, allow connections from Render. Render's free web
+services do not have a fixed outbound IP; a broad `0.0.0.0/0` entry is easier
+to configure but allows network access attempts from any IP. Use a provider
+plan with static outbound IPs and restrict the Atlas allowlist when tighter
+network restrictions are required.
+
+### 2. Deploy the API on Render
+
+Create a Render Blueprint from this repository and use the root `render.yaml`.
+It creates the API with `server` as its root directory, `npm ci` as the build
+command, `npm start` as the start command, and `/api/health` as its health
+check. The process listens on Render's injected `PORT`; do not set a fixed
+production port.
+
+Set these Blueprint environment variables when prompted:
+
+| Variable | Value |
+| --- | --- |
+| `NODE_ENV` | `production` (set by the Blueprint) |
+| `MONGODB_URI` | Atlas connection string (secret; required) |
+| `CLIENT_ORIGIN` | Exact Vercel origin, e.g. `https://your-project.vercel.app` (required; no path or trailing route) |
+| `AUTO_SEED` | `true` (set by the Blueprint; inserts sample data if the Atlas database is empty) |
+
+After deployment, check `https://<your-render-service>.onrender.com/api/health`.
+The health endpoint returns HTTP 200 only after MongoDB is connected. A missing
+Atlas URI, invalid Vercel origin, or failed database connection stops the
+production service from starting. If a custom Vercel domain is used, set
+`CLIENT_ORIGIN` to that exact origin. Multiple allowed origins can be
+comma-separated. Add exact preview origins only when needed.
+
+### 3. Deploy the frontend on Vercel
+
+Import the same GitHub repository into Vercel and keep the **project root at the
+repository root**. The root `vercel.json` already configures:
+
+- Install command: `npm ci --prefix client`
+- Build command: `npm run build --prefix client`
+- Output directory: `client/dist`
+- SPA fallback rewrite to `index.html`
+
+In Vercel Project Settings → Environment Variables, set `VITE_API_URL` for
+Production to `https://<your-render-service>.onrender.com/api`. Add it to Preview
+and Development only if those deployments should call the same API. Redeploy
+after adding or changing the variable because Vite embeds it at build time.
+The frontend uses `VITE_API_URL` for API requests; local development defaults
+to `http://localhost:4000/api`, while an unconfigured production build uses the
+bundled demo data.
+
+Once Vercel assigns the project domain, update Render's `CLIENT_ORIGIN` to the
+exact origin shown in Vercel. Redeploy/restart the Render service after changing
+the variable.
+
+### 4. GitHub Actions and GitHub Pages
+
+`.github/workflows/ci.yml` runs backend tests and the frontend production build
+on pushes and pull requests to `main`. It does not publish a site. GitHub Pages
+is not part of this deployment. If Pages was previously enabled, it continues
+to serve its last published version until it is disabled in repository
+Settings → Pages. After verifying the Vercel site, disable Pages there so an
+old copy is not mistaken for the current site. Do not add a Pages deployment
+workflow while using Vercel as the frontend host.
+
+### 5. Secrets
+
+Never commit `.env` files, Atlas credentials, or deployment secrets. Local
+`.env` files and Vercel project metadata are excluded from Git. The committed
+`.env.example` files contain placeholders only.
 
 ## Optional real station locations
 

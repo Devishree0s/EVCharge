@@ -16,7 +16,6 @@ dotenv.config();
 // local fix, but is skipped on the hosting platform (NODE_ENV=production).
 if (process.env.NODE_ENV !== 'production') dns.setServers(['8.8.8.8', '1.1.1.1']);
 
-const PORT = process.env.PORT || 4000;
 const app = express();
 app.set('trust proxy', 1);
 app.use(helmet());
@@ -28,7 +27,24 @@ const demoStations = seedData.map((station, index) => ({
 }));
 const demoReports = [];
 
-const allowed = (process.env.CLIENT_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
+const parseClientOrigins = (value) => String(value || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => {
+    let url;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new Error(`CLIENT_ORIGIN contains an invalid URL: ${origin}`);
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error(`CLIENT_ORIGIN must contain only website origins, without paths: ${origin}`);
+    }
+    return url.origin;
+  });
+
+const allowed = parseClientOrigins(process.env.CLIENT_ORIGIN);
 app.use(cors({ origin: allowed.length ? allowed : true }));
 app.use(express.json({ limit: '100kb' }));
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false }));
@@ -38,6 +54,26 @@ const reportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardH
 const num = (v) => (v === undefined || v === '' || v === null ? NaN : Number(v));
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const validCoords = (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
+export function validateProductionConfig(env = process.env) {
+  const port = env.PORT === undefined || env.PORT === '' ? 4000 : Number(env.PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be an integer between 1 and 65535.');
+  }
+
+  if (env.NODE_ENV === 'production') {
+    if (!env.MONGODB_URI?.trim()) {
+      throw new Error('MONGODB_URI is required in production.');
+    }
+    if (!env.CLIENT_ORIGIN?.trim()) {
+      throw new Error('CLIENT_ORIGIN is required in production. Set it to the Vercel website origin.');
+    }
+    parseClientOrigins(env.CLIENT_ORIGIN);
+  }
+
+  return { port };
+}
+
 const haversineKm = (a, b) => {
   const radians = (degrees) => degrees * Math.PI / 180;
   const dLat = radians(b.lat - a.lat);
@@ -66,14 +102,16 @@ app.use('/api/stations', (req, res, next) => {
 });
 
 // ---------- routes ----------
-app.get('/api/health', (req, res) =>
-  res.json({
-    ok: true,
+app.get('/api/health', (req, res) => {
+  const connected = mongoose.connection.readyState === 1;
+  const ready = demoMode || connected;
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
     service: 'EVCharge API',
     mode: demoMode ? 'demo' : 'mongodb',
-    db: demoMode ? 'not_required' : mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-  })
-);
+    db: demoMode ? 'not_required' : connected ? 'connected' : 'disconnected',
+  });
+});
 
 // GET /api/stations?lat=&lng=&radiusKm=&connector=&status=&minPower=&maxPrice=&type=&q=&limit=
 // With lat/lng the result is sorted nearest-first and each station gets distanceKm.
@@ -225,21 +263,27 @@ app.use((err, req, res, next) => {
 
 // ---------- start ----------
 export async function start() {
-  app.listen(PORT, () => console.log(`EVCharge API running on port ${PORT}`));
-  if (demoMode) return console.log(`Demo mode enabled with ${demoStations.length} sample stations; reports last until the server restarts.`);
-  try {
-    await mongoose.connect(process.env.MONGODB_URI);
+  const { port } = validateProductionConfig();
+  if (!demoMode) {
+    await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
     console.log('MongoDB connected');
-    await Station.syncIndexes(); // makes sure the 2dsphere index exists
+    await Station.createIndexes();
     if (process.env.AUTO_SEED !== 'false' && (await Station.estimatedDocumentCount()) === 0) {
       await Station.insertMany(seedData);
       console.log(`Database was empty – seeded ${seedData.length} demo stations`);
     }
-  } catch (e) {
-    console.error('MongoDB connection failed:', e.message);
+  } else {
+    console.log(`Demo mode enabled with ${demoStations.length} sample stations; reports last until the server restarts.`);
   }
+
+  return app.listen(port, () => console.log(`EVCharge API running on port ${port}`));
 }
 
 export default app;
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) start();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  start().catch((error) => {
+    console.error(`Failed to start EVCharge API: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
