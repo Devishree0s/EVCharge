@@ -1,0 +1,17 @@
+# Render "Blueprint": deploys the Express API for free from this same GitHub repo.
+services:
+  - type: web
+    name: evcharge-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_ORIGIN
+        value: https://devishree0s.github.io
+      - key: MONGODB_URI
+        sync: false   # you paste this in the Render dashboard (never commit it)
