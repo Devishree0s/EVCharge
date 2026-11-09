@@ -33,8 +33,14 @@ function Fit({ points }) {
 
 // stations: array, user: {lat,lng}, route: [[lat,lng],...], highlightId: station _id
 export default function StationMap({ stations = [], user, route, highlightId, height = 420, extra = [] }) {
+  const mappableStations = stations.filter((station) =>
+    Number.isFinite(station.latitude) &&
+    Number.isFinite(station.longitude) &&
+    Math.abs(station.latitude) <= 90 &&
+    Math.abs(station.longitude) <= 180
+  );
   const pts = [
-    ...stations.map((s) => [s.latitude, s.longitude]),
+    ...mappableStations.map((s) => [s.latitude, s.longitude]),
     ...(user ? [[user.lat, user.lng]] : []),
     ...extra.map((p) => [p.lat, p.lng]),
     ...(route || []).filter((_, i, a) => i % Math.ceil(a.length / 60 || 1) === 0),
@@ -45,7 +51,7 @@ export default function StationMap({ stations = [], user, route, highlightId, he
         <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <Fit points={pts} />
         {route && route.length > 1 && <Polyline positions={route} pathOptions={{ color: '#10211b', weight: 5, opacity: 0.75 }} />}
-        {stations.map((s) => (
+        {mappableStations.map((s) => (
           <Marker key={s._id} position={[s.latitude, s.longitude]} icon={iconFor(s.status, s._id === highlightId)}>
             <Popup>
               <b>{s.name}</b><br />

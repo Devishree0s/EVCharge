@@ -39,7 +39,7 @@ jobs:
         run: npm run build
         working-directory: client
         env:
-          VITE_API_URL: https://evcharge-api-0rmq.onrender.com/api
+          VITE_API_URL: ''
 
       - name: Upload website
         uses: actions/upload-pages-artifact@v3
