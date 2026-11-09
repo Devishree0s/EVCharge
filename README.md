@@ -1,3 +1,9 @@
+# EVCharge – Smart EV Charging Station Finder
+
+🌐 **LIVE WEBSITE:** https://devishree0s.github.io/EVCharge/?utm_source=chatgpt.com#/stations
+
+Explore 96 Indian EV charging stations with an interactive map, station availability, reliability ratings, charging power, and pricing.
+
 # EVCharge
 
 An India-focused EV charging companion for finding dependable stops in city
